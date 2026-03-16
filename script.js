@@ -33,12 +33,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (tasks.length === 0) {
         const patentTask = {
             id: Date.now(),
-            text: "Check on my patent tomorrow at 10 AM",
+            title: "Check on my patent tomorrow at 10 AM",
             completed: false,
             priority: "high",
-            category: "work",
             createdAt: new Date().toISOString(),
-            dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Tomorrow
+            completedAt: null
         };
         tasks.push(patentTask);
         localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
