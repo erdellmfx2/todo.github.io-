@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub To-Do List</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="icon" type="image/x-icon" href="https://github.githubassets.com/favicons/favicon.png">
+</head>
+<body>
+    <div class="container">
+        <header class="github-header">
+            <div class="header-top">
+                <div class="logo">
+                    <i class="fab fa-github"></i>
+                    <span>GitHub To-Do</span>
+                </div>
+                <div class="user-info">
+                    <img src="https://avatars.githubusercontent.com/u/8642570479?v=4" alt="Profile" class="avatar">
+                    <span>Erdell Maurice</span>
+                </div>
+            </div>
+            <nav class="github-nav">
+                <a href="#" class="nav-item active"><i class="fas fa-check-circle"></i> To-Do</a>
+                <a href="#" class="nav-item"><i class="fas fa-history"></i> Completed</a>
+                <a href="#" class="nav-item"><i class="fas fa-cog"></i> Settings</a>
+            </nav>
+        </header>
+
+        <main class="main-content">
+            <div class="repo-header">
+                <h1><i class="fas fa-list-check"></i> My To-Do List</h1>
+                <p class="repo-description">A GitHub-inspired task management system</p>
+                <div class="repo-stats">
+                    <span class="stat"><i class="fas fa-code-branch"></i> <strong id="total-tasks">0</strong> Total Tasks</span>
+                    <span class="stat"><i class="fas fa-check"></i> <strong id="completed-tasks">0</strong> Completed</span>
+                    <span class="stat"><i class="fas fa-clock"></i> <strong id="pending-tasks">0</strong> Pending</span>
+                </div>
+            </div>
+
+            <div class="todo-section">
+                <div class="add-todo">
+                    <input type="text" id="new-task" placeholder="Add a new task (e.g., 'Fix bug in login page')" autocomplete="off">
+                    <button id="add-task-btn"><i class="fas fa-plus"></i> Add Task</button>
+                    <div class="priority-selector">
+                        <label for="priority">Priority:</label>
+                        <select id="priority">
+                            <option value="low">Low</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filters">
+                    <button class="filter-btn active" data-filter="all">All Tasks</button>
+                    <button class="filter-btn" data-filter="pending">Pending</button>
+                    <button class="filter-btn" data-filter="completed">Completed</button>
+                    <button class="filter-btn" data-filter="high">High Priority</button>
+                </div>
+
+                <div class="todo-list" id="todo-list">
+                    <!-- Tasks will be dynamically added here -->
+                    <div class="empty-state">
+                        <i class="fas fa-clipboard-list"></i>
+                        <h3>No tasks yet</h3>
+                        <p>Add your first to-do item above to get started!</p>
+                    </div>
+                </div>
+
+                <div class="github-actions">
+                    <button id="clear-completed" class="github-btn"><i class="fas fa-trash"></i> Clear Completed</button>
+                    <button id="export-tasks" class="github-btn"><i class="fas fa-download"></i> Export as JSON</button>
+                    <button id="import-tasks" class="github-btn"><i class="fas fa-upload"></i> Import Tasks</button>
+                </div>
+            </div>
+
+            <div class="github-sidebar">
+                <div class="sidebar-section">
+                    <h3><i class="fas fa-info-circle"></i> About</h3>
+                    <p>This is a GitHub-inspired to-do list application. Tasks are saved locally in your browser.</p>
+                </div>
+                <div class="sidebar-section">
+                    <h3><i class="fas fa-tags"></i> Labels</h3>
+                    <div class="labels">
+                        <span class="label low"><i class="fas fa-arrow-down"></i> Low</span>
+                        <span class="label medium"><i class="fas fa-minus"></i> Medium</span>
+                        <span class="label high"><i class="fas fa-arrow-up"></i> High</span>
+                        <span class="label critical"><i class="fas fa-exclamation-triangle"></i> Critical</span>
+                    </div>
+                </div>
+                <div class="sidebar-section">
+                    <h3><i class="fas fa-rocket"></i> Quick Stats</h3>
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-number" id="today-tasks">0</div>
+                            <div class="stat-label">Today</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number" id="week-tasks">0</div>
+                            <div class="stat-label">This Week</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number" id="overdue-tasks">0</div>
+                            <div class="stat-label">Overdue</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="github-footer">
+            <p>GitHub To-Do List • Created for Erdell Maurice • <span id="current-date"></span></p>
+            <p class="footer-links">
+                <a href="#"><i class="fab fa-github"></i> View on GitHub</a>
+                •
+                <a href="#"><i class="fas fa-question-circle"></i> Help</a>
+                •
+                <a href="#"><i class="fas fa-bug"></i> Report Issue</a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- Import/Export Modal -->
+    <div id="import-export-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h3><i class="fas fa-file-export"></i> Import/Export Tasks</h3>
+            <div class="modal-tabs">
+                <button class="modal-tab active" data-tab="export">Export</button>
+                <button class="modal-tab" data-tab="import">Import</button>
+            </div>
+            <div class="modal-body">
+                <div id="export-tab" class="tab-content active">
+                    <p>Copy the JSON below to save your tasks:</p>
+                    <textarea id="export-data" readonly></textarea>
+                    <button id="copy-json" class="github-btn"><i class="fas fa-copy"></i> Copy to Clipboard</button>
+                </div>
+                <div id="import-tab" class="tab-content">
+                    <p>Paste your task JSON here:</p>
+                    <textarea id="import-data" placeholder='Paste JSON here...'></textarea>
+                    <button id="import-json" class="github-btn"><i class="fas fa-file-import"></i> Import Tasks</button>
+                    <p class="warning"><i class="fas fa-exclamation-triangle"></i> Warning: This will replace all current tasks.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
