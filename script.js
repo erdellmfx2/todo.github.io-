@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const exportBtn = document.getElementById('export-tasks');
     const importBtn = document.getElementById('import-tasks');
     const syncLitebotBtn = document.getElementById('sync-litebot');
+    const githubTokenInput = document.getElementById('github-token');
+    const saveTokenBtn = document.getElementById('save-token');
     const modal = document.getElementById('import-export-modal');
     const closeModal = document.querySelector('.close-modal');
     const modalTabs = document.querySelectorAll('.modal-tab');
@@ -30,6 +32,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // State
     let tasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
+    
+    // Load GitHub token if exists
+    const savedToken = localStorage.getItem('github_gist_token');
+    if (savedToken && githubTokenInput) {
+        githubTokenInput.value = savedToken;
+    }
     
     // Add sample patent task if no tasks exist (first-time users)
     if (tasks.length === 0) {
@@ -77,6 +85,7 @@ document.addEventListener('DOMContentLoaded', function() {
     exportBtn.addEventListener('click', openExportModal);
     importBtn.addEventListener('click', openImportModal);
     syncLitebotBtn.addEventListener('click', syncWithLitebot);
+    saveTokenBtn.addEventListener('click', saveGitHubToken);
     closeModal.addEventListener('click', closeModalWindow);
     
     modalTabs.forEach(tab => {
@@ -507,6 +516,51 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error saving to gist:', error);
             return false;
         }
+    }
+    
+    function saveGitHubToken() {
+        const token = githubTokenInput.value.trim();
+        if (!token) {
+            alert('Please enter a GitHub token');
+            githubTokenInput.focus();
+            return;
+        }
+        
+        // Test the token by trying to access a gist (read-only)
+        fetch('https://api.github.com/gists/e45f66951c8b381eb33fa9b72194fab2', {
+            headers: {
+                'Authorization': `token ${token}`
+            }
+        })
+        .then(response => {
+            if (response.ok) {
+                // Token works, save it
+                localStorage.setItem('github_gist_token', token);
+                alert('✅ GitHub token saved successfully!\n\nYour tasks will now sync automatically with lite_bot.');
+                
+                // Trigger an immediate sync
+                if (tasks.length > 0) {
+                    const exportData = {
+                        version: '1.0',
+                        timestamp: new Date().toISOString(),
+                        source: 'github-todo-website',
+                        tasks: tasks,
+                        stats: {
+                            total: tasks.length,
+                            completed: tasks.filter(t => t.completed).length,
+                            pending: tasks.filter(t => !t.completed).length
+                        }
+                    };
+                    saveToGitHubGist(JSON.stringify(exportData, null, 2));
+                }
+            } else {
+                alert('❌ Invalid token. Please check that your token has gist scope and try again.');
+            }
+        })
+        .catch(error => {
+            console.error('Token test error:', error);
+            alert('❌ Error testing token. Please check your connection and try again.');
+        });
     }
     
     // Auto-save to gist when tasks change (if token exists)
