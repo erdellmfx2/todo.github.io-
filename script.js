@@ -28,6 +28,22 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // State
     let tasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
+    
+    // Add sample patent task if no tasks exist (first-time users)
+    if (tasks.length === 0) {
+        const patentTask = {
+            id: Date.now(),
+            text: "Check on my patent tomorrow at 10 AM",
+            completed: false,
+            priority: "high",
+            category: "work",
+            createdAt: new Date().toISOString(),
+            dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Tomorrow
+        };
+        tasks.push(patentTask);
+        localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
+    }
+    
     let currentFilter = 'all';
     
     // Initialize

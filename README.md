@@ -28,6 +28,7 @@ github-todo-website/
 1. **Open the website**: Simply open `index.html` in your web browser
 2. **Add a task**: Type in the input field and click "Add Task" or press Enter
 3. **Set priority**: Choose priority level before adding task
+4. **Sample task**: First-time users will see a sample "Check on my patent" task
 4. **Manage tasks**:
    - ✅ Checkbox: Mark task as complete/incomplete
    - ✏️ Edit button: Edit task title
