@@ -396,24 +396,102 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const jsonString = JSON.stringify(exportData, null, 2);
         
-        // Copy to clipboard
-        navigator.clipboard.writeText(jsonString)
-            .then(() => {
-                alert(`✅ ${tasks.length} tasks copied to clipboard for lite_bot!\n\nPaste this JSON to lite_bot in our chat.\n\nFor automatic sync in the future, we'll set up GitHub Gist or webhook integration.`);
-            })
-            .catch(err => {
-                console.error('Failed to copy: ', err);
-                // Fallback: Show in modal
-                exportDataTextarea.value = jsonString;
-                modal.classList.add('active');
-                modalTabs.forEach(t => t.classList.remove('active'));
-                document.querySelector('.modal-tab[data-tab="export"]').classList.add('active');
-                document.querySelectorAll('.tab-content').forEach(content => {
-                    content.classList.remove('active');
-                });
-                document.getElementById('export-tab').classList.add('active');
-                alert('Tasks prepared for lite_bot! Copy the JSON from the export tab.');
+        // Try to save to GitHub Gist for automatic reading
+        saveToGitHubGist(jsonString).then(success => {
+            if (success) {
+                alert(`✅ ${tasks.length} tasks synced with lite_bot!\n\nI can now automatically read your tasks from GitHub Gist.\n\nNext: I'll check your tasks every 5-10 minutes.`);
+            } else {
+                // Fallback to clipboard
+                navigator.clipboard.writeText(jsonString)
+                    .then(() => {
+                        alert(`✅ ${tasks.length} tasks copied to clipboard!\n\nPaste this JSON to lite_bot for now.\n\nAutomatic gist sync requires GitHub authorization.`);
+                    })
+                    .catch(err => {
+                        console.error('Failed to copy: ', err);
+                        // Show in modal
+                        exportDataTextarea.value = jsonString;
+                        modal.classList.add('active');
+                        modalTabs.forEach(t => t.classList.remove('active'));
+                        document.querySelector('.modal-tab[data-tab="export"]').classList.add('active');
+                        document.querySelectorAll('.tab-content').forEach(content => {
+                            content.classList.remove('active');
+                        });
+                        document.getElementById('export-tab').classList.add('active');
+                        alert('Tasks prepared! Copy from export tab.');
+                    });
+            }
+        });
+    }
+    
+    async function saveToGitHubGist(jsonData) {
+        try {
+            // Check if we have a GitHub token
+            const token = localStorage.getItem('github_gist_token');
+            if (!token) {
+                console.log('No GitHub token found, using manual sync');
+                return false;
+            }
+            
+            const gistId = 'e45f66951c8b381eb33fa9b72194fab2'; // Your gist ID
+            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    description: `GitHub To-Do Tasks - Updated ${new Date().toLocaleString()}`,
+                    files: {
+                        'todo-tasks.json': {
+                            content: jsonData
+                        }
+                    }
+                })
             });
+            
+            if (response.ok) {
+                console.log('Tasks saved to GitHub Gist successfully');
+                return true;
+            } else {
+                console.error('Failed to save to gist:', await response.text());
+                return false;
+            }
+        } catch (error) {
+            console.error('Error saving to gist:', error);
+            return false;
+        }
+    }
+    
+    // Auto-save to gist when tasks change (if token exists)
+    function saveTasks() {
+        localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
+        
+        // Auto-save to gist if we have a token
+        const token = localStorage.getItem('github_gist_token');
+        if (token && tasks.length > 0) {
+            const exportData = {
+                version: '1.0',
+                timestamp: new Date().toISOString(),
+                source: 'github-todo-website',
+                tasks: tasks,
+                stats: {
+                    total: tasks.length,
+                    completed: tasks.filter(t => t.completed).length,
+                    pending: tasks.filter(t => !t.completed).length
+                }
+            };
+            
+            // Debounced auto-save (only save every 30 seconds max)
+            if (!window._gistSaveTimeout) {
+                window._gistSaveTimeout = setTimeout(() => {
+                    saveToGitHubGist(JSON.stringify(exportData, null, 2))
+                        .then(success => {
+                            if (success) console.log('Auto-saved to gist');
+                        });
+                    window._gistSaveTimeout = null;
+                }, 30000); // 30 second debounce
+            }
+        }
     }
     
     // Add some sample tasks if empty
