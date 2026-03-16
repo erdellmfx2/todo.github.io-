@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const newTaskInput = document.getElementById('new-task');
     const addTaskBtn = document.getElementById('add-task-btn');
     const prioritySelect = document.getElementById('priority');
+    const dueDateInput = document.getElementById('due-date');
     const todoList = document.getElementById('todo-list');
     const filterButtons = document.querySelectorAll('.filter-btn');
     const clearCompletedBtn = document.getElementById('clear-completed');
@@ -32,13 +33,19 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add sample patent task if no tasks exist (first-time users)
     if (tasks.length === 0) {
+        // Set due date to tomorrow at 10:00 AM
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(10, 0, 0, 0);
+        
         const patentTask = {
             id: Date.now(),
             title: "Check on my patent tomorrow at 10 AM",
             completed: false,
             priority: "high",
             createdAt: new Date().toISOString(),
-            completedAt: null
+            completedAt: null,
+            dueDate: tomorrow.toISOString()
         };
         tasks.push(patentTask);
         localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
@@ -120,7 +127,8 @@ document.addEventListener('DOMContentLoaded', function() {
             priority: prioritySelect.value,
             completed: false,
             createdAt: new Date().toISOString(),
-            completedAt: null
+            completedAt: null,
+            dueDate: dueDateInput.value ? new Date(dueDateInput.value).toISOString() : null
         };
         
         tasks.unshift(task); // Add to beginning
@@ -132,6 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
         newTaskInput.value = '';
         newTaskInput.focus();
         prioritySelect.value = 'medium';
+        dueDateInput.value = '';
     }
     
     function toggleTaskCompletion(taskId) {
@@ -228,6 +237,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="todo-meta">
                         <span><i class="far fa-calendar"></i> ${formatDate(task.createdAt)}</span>
+                        ${task.dueDate ? `<span><i class="far fa-clock"></i> Due: ${formatDateTime(task.dueDate)}</span>` : ''}
                         ${task.completed ? `<span><i class="far fa-check-circle"></i> Completed: ${formatDate(task.completedAt)}</span>` : ''}
                     </div>
                 </div>
@@ -280,9 +290,14 @@ document.addEventListener('DOMContentLoaded', function() {
         }).length;
         weekTasksEl.textContent = weekTasks;
         
-        // Calculate overdue tasks (tasks created more than 7 days ago and not completed)
+        // Calculate overdue tasks (tasks with due date in past and not completed)
         const overdueTasks = tasks.filter(t => {
             if (t.completed) return false;
+            if (t.dueDate) {
+                const dueDate = new Date(t.dueDate);
+                return dueDate < new Date();
+            }
+            // Fallback: tasks created more than 7 days ago
             const taskDate = new Date(t.createdAt);
             const daysOld = (Date.now() - taskDate.getTime()) / (1000 * 60 * 60 * 24);
             return daysOld > 7;
@@ -308,6 +323,38 @@ document.addEventListener('DOMContentLoaded', function() {
             day: 'numeric',
             year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
         });
+    }
+    
+    function formatDateTime(dateString) {
+        if (!dateString) return 'N/A';
+        const date = new Date(dateString);
+        const now = new Date();
+        const isToday = date.toDateString() === now.toDateString();
+        const isTomorrow = new Date(now.getTime() + 86400000).toDateString() === date.toDateString();
+        const isYesterday = new Date(now.getTime() - 86400000).toDateString() === date.toDateString();
+        
+        let datePart;
+        if (isToday) {
+            datePart = 'Today';
+        } else if (isTomorrow) {
+            datePart = 'Tomorrow';
+        } else if (isYesterday) {
+            datePart = 'Yesterday';
+        } else {
+            datePart = date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+            });
+        }
+        
+        const timePart = date.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit',
+            hour12: true 
+        });
+        
+        return `${datePart} at ${timePart}`;
     }
     
     function openExportModal() {

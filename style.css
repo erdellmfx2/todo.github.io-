@@ -226,6 +226,30 @@ body {
     padding: 4px 8px;
 }
 
+.due-date-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: var(--github-dark);
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--github-border);
+}
+
+#due-date {
+    background-color: var(--github-dark);
+    color: var(--github-text);
+    border: 1px solid var(--github-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-family: inherit;
+}
+
+#due-date::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+    cursor: pointer;
+}
+
 .filters {
     display: flex;
     gap: 12px;
