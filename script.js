@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const clearCompletedBtn = document.getElementById('clear-completed');
     const exportBtn = document.getElementById('export-tasks');
     const importBtn = document.getElementById('import-tasks');
+    const syncLitebotBtn = document.getElementById('sync-litebot');
     const modal = document.getElementById('import-export-modal');
     const closeModal = document.querySelector('.close-modal');
     const modalTabs = document.querySelectorAll('.modal-tab');
@@ -68,6 +69,7 @@ document.addEventListener('DOMContentLoaded', function() {
     clearCompletedBtn.addEventListener('click', clearCompletedTasks);
     exportBtn.addEventListener('click', openExportModal);
     importBtn.addEventListener('click', openImportModal);
+    syncLitebotBtn.addEventListener('click', syncWithLitebot);
     closeModal.addEventListener('click', closeModalWindow);
     
     modalTabs.forEach(tab => {
@@ -376,6 +378,42 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             alert(`Error importing tasks: ${error.message}`);
         }
+    }
+    
+    function syncWithLitebot() {
+        // Create a formatted export for lite_bot
+        const exportData = {
+            version: '1.0',
+            timestamp: new Date().toISOString(),
+            source: 'github-todo-website',
+            tasks: tasks,
+            stats: {
+                total: tasks.length,
+                completed: tasks.filter(t => t.completed).length,
+                pending: tasks.filter(t => !t.completed).length
+            }
+        };
+        
+        const jsonString = JSON.stringify(exportData, null, 2);
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(jsonString)
+            .then(() => {
+                alert(`✅ ${tasks.length} tasks copied to clipboard for lite_bot!\n\nPaste this JSON to lite_bot in our chat.\n\nFor automatic sync in the future, we'll set up GitHub Gist or webhook integration.`);
+            })
+            .catch(err => {
+                console.error('Failed to copy: ', err);
+                // Fallback: Show in modal
+                exportDataTextarea.value = jsonString;
+                modal.classList.add('active');
+                modalTabs.forEach(t => t.classList.remove('active'));
+                document.querySelector('.modal-tab[data-tab="export"]').classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById('export-tab').classList.add('active');
+                alert('Tasks prepared for lite_bot! Copy the JSON from the export tab.');
+            });
     }
     
     // Add some sample tasks if empty
