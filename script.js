@@ -528,16 +528,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
             
-            // Debounced auto-save (only save every 30 seconds max)
-            if (!window._gistSaveTimeout) {
-                window._gistSaveTimeout = setTimeout(() => {
-                    saveToGitHubGist(JSON.stringify(exportData, null, 2))
-                        .then(success => {
-                            if (success) console.log('Auto-saved to gist');
-                        });
-                    window._gistSaveTimeout = null;
-                }, 30000); // 30 second debounce
-            }
+            // Immediate sync (no debounce)
+            saveToGitHubGist(JSON.stringify(exportData, null, 2))
+                .then(success => {
+                    if (success) console.log('Auto-synced to gist');
+                });
         }
     }
     
