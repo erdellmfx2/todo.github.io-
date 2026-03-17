@@ -336,11 +336,42 @@ document.addEventListener('DOMContentLoaded', function() {
         const content = JSON.stringify(task, null, 2);
         const encodedContent = btoa(content);
         
-        // Determine directory based on status
-        const directory = task.status === "completed" ? "completed" : "active";
+        // Determine directory based on status structure
+        const directory = task.archived_at ? "archived" : (task.status === "completed" ? "completed" : "active");
         const url = `${REPO_URL}/contents/tasks/${directory}/${filename}`;
         
         try {
+            // Check for previous file in other directories to clean them up (e.g. unarchiving, completing)
+            const directories = ["active", "completed", "archived"];
+            for (const dir of directories) {
+                if (dir === directory) continue; // Skip the destination directory
+                const oldUrl = `${REPO_URL}/contents/tasks/${dir}/${filename}`;
+                
+                try {
+                    const deleteCheckResponse = await fetch(oldUrl, {
+                        headers: { 'Authorization': `token ${token}` }
+                    });
+                    
+                    if (deleteCheckResponse.ok) {
+                        const oldFileData = await deleteCheckResponse.json();
+                        // Delete the old file
+                        await fetch(oldUrl, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `token ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                message: `Move task to ${directory}: cleanup old copy of ${task.title}`,
+                                sha: oldFileData.sha
+                            })
+                        });
+                        console.log(`Cleaned up old copy from ${dir}`);
+                    }
+                } catch (e) {
+                    console.log(`No old copy found in ${dir}`);
+                }
+            }
             // Check if file exists
             const checkResponse = await fetch(url, {
                 headers: { 'Authorization': `token ${token}` }
@@ -571,14 +602,28 @@ document.addEventListener('DOMContentLoaded', function() {
             task.status = task.status === 'completed' ? 'pending' : 'completed';
             task.updated_at = new Date().toISOString();
             
-            task.history.push({
-                action: "status_update",
-                by: "erdell",
-                at: new Date().toISOString(),
-                notes: `Task ${task.status === 'completed' ? 'completed' : 'reopened'}`,
-                old_status: oldStatus,
-                new_status: task.status
-            });
+            // Check if we are un-archiving
+            if (task.archived_at && task.status === 'pending') {
+                delete task.archived_at;
+                delete task.archived_by;
+                task.history.push({
+                    action: "status_update",
+                    by: "erdell",
+                    at: new Date().toISOString(),
+                    notes: `Task unarchived and reopened`,
+                    old_status: "archived",
+                    new_status: "pending"
+                });
+            } else {
+                task.history.push({
+                    action: "status_update",
+                    by: "erdell",
+                    at: new Date().toISOString(),
+                    notes: `Task ${task.status === 'completed' ? 'completed' : 'reopened'}`,
+                    old_status: oldStatus,
+                    new_status: task.status
+                });
+            }
             
             // Save to repository
             const success = await saveTaskToRepository(task, "update");
