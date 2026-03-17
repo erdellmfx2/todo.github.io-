@@ -765,7 +765,8 @@ document.addEventListener('DOMContentLoaded', function() {
             // Show results
             if (archivedCount > 0) {
                 alert(`✅ Archived ${archivedCount} task(s) to archived directory.`);
-                loadTasks(); // Refresh the task list
+                renderTasks();
+                updateStats();
             }
             
             
