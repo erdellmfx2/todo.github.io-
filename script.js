@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const REPO_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
     const TASKS_ACTIVE_URL = `${REPO_URL}/contents/tasks/active`;
     const TASKS_COMPLETED_URL = `${REPO_URL}/contents/tasks/completed`;
+    const TASKS_ARCHIVED_URL = `${REPO_URL}/contents/tasks/archived`;
     
     // State
     let tasks = [];
@@ -200,39 +201,37 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            // Load from both active and completed directories
-            const [activeResponse, completedResponse] = await Promise.all([
+            // Load from active, completed, and archived directories
+            const [activeResponse, completedResponse, archivedResponse] = await Promise.all([
                 fetch(`${TASKS_ACTIVE_URL}`, {
                     headers: { 'Authorization': `token ${token}` }
-                }),
+                }).catch(() => ({ ok: false })),
                 fetch(`${TASKS_COMPLETED_URL}`, {
                     headers: { 'Authorization': `token ${token}` }
-                })
+                }).catch(() => ({ ok: false })),
+                fetch(`${TASKS_ARCHIVED_URL}`, {
+                    headers: { 'Authorization': `token ${token}` }
+                }).catch(() => ({ ok: false }))
             ]);
             
             const tasks = [];
             
-            if (activeResponse.ok) {
-                const activeFiles = await activeResponse.json();
-                for (const file of activeFiles) {
-                    if (file.name.endsWith('.json')) {
-                        const taskResponse = await fetch(file.download_url);
-                        const task = await taskResponse.json();
-                        tasks.push(task);
+            const processDirectoryResponse = async (response) => {
+                if (response.ok) {
+                    const files = await response.json();
+                    for (const file of files) {
+                        if (file.name.endsWith('.json')) {
+                            const taskResponse = await fetch(file.download_url);
+                            const task = await taskResponse.json();
+                            tasks.push(task);
+                        }
                     }
                 }
-            }
-            
-            if (completedResponse.ok) {
-                const completedFiles = await completedResponse.json();
-                for (const file of completedFiles) {
-                    if (file.name.endsWith('.json')) {
-                        const taskResponse = await fetch(file.download_url);
-                        const task = await taskResponse.json();
-                        tasks.push(task);
-                    }
-                }
-            }
+            };
+
+            await processDirectoryResponse(activeResponse);
+            await processDirectoryResponse(completedResponse);
+            await processDirectoryResponse(archivedResponse);
             
             return tasks;
         } catch (error) {
@@ -451,14 +450,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 filteredTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
                 break;
             case 'completed':
-                filteredTasks = tasks.filter(t => t.status === 'completed');
+                filteredTasks = tasks.filter(t => t.status === 'completed' && !t.archived_at);
+                break;
+            case 'archived':
+                filteredTasks = tasks.filter(t => t.status === 'completed' || t.archived_at);
                 break;
             case 'high':
-                filteredTasks = tasks.filter(t => t.priority === 'high' || t.priority === 'critical');
+                filteredTasks = tasks.filter(t => (t.priority === 'high' || t.priority === 'critical') && !t.archived_at);
                 break;
             case 'today':
                 const today = new Date().toISOString().split('T')[0];
-                filteredTasks = tasks.filter(t => t.due_date && t.due_date.startsWith(today));
+                filteredTasks = tasks.filter(t => t.due_date && t.due_date.startsWith(today) && !t.archived_at);
+                break;
+            case 'all':
+            default:
+                // For 'all', we typically want to hide archived unless we specifically chose the archived filter
+                filteredTasks = tasks.filter(t => !t.archived_at);
                 break;
         }
         
