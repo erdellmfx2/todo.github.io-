@@ -201,15 +201,16 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            // Load from active, completed, and archived directories
+            // Load from active, completed, and archived directories, bypassing cache
+            const cacheBuster = `?t=${Date.now()}`;
             const [activeResponse, completedResponse, archivedResponse] = await Promise.all([
-                fetch(`${TASKS_ACTIVE_URL}`, {
+                fetch(`${TASKS_ACTIVE_URL}${cacheBuster}`, {
                     headers: { 'Authorization': `token ${token}` }
                 }).catch(() => ({ ok: false })),
-                fetch(`${TASKS_COMPLETED_URL}`, {
+                fetch(`${TASKS_COMPLETED_URL}${cacheBuster}`, {
                     headers: { 'Authorization': `token ${token}` }
                 }).catch(() => ({ ok: false })),
-                fetch(`${TASKS_ARCHIVED_URL}`, {
+                fetch(`${TASKS_ARCHIVED_URL}${cacheBuster}`, {
                     headers: { 'Authorization': `token ${token}` }
                 }).catch(() => ({ ok: false }))
             ]);
@@ -221,13 +222,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     const files = await response.json();
                     for (const file of files) {
                         if (file.name.endsWith('.json')) {
-                            const taskResponse = await fetch(file.download_url);
+                            // Also bypass cache when fetching tasks
+                            const taskResponse = await fetch(`${file.download_url}?t=${Date.now()}`);
                             const task = await taskResponse.json();
                             if (isArchived) {
                                 // Ensure tasks loaded from archived folder are explicitly marked
                                 task.archived_at = task.archived_at || new Date().toISOString();
                             }
-                            tasks.push(task);
+                            
+                            // Handle GitHub API cache returning the same task from multiple directories
+                            const existingIndex = tasks.findIndex(t => t.id === task.id);
+                            if (existingIndex !== -1) {
+                                if (isArchived) {
+                                    tasks[existingIndex] = task; // Archived copy takes precedence over completed
+                                }
+                            } else {
+                                tasks.push(task);
+                            }
                         }
                     }
                 }
@@ -457,7 +468,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 filteredTasks = tasks.filter(t => t.status === 'completed' && !t.archived_at);
                 break;
             case 'archived':
-                filteredTasks = tasks.filter(t => t.status === 'completed' || t.archived_at);
+                filteredTasks = tasks.filter(t => t.archived_at);
                 break;
             case 'high':
                 filteredTasks = tasks.filter(t => (t.priority === 'high' || t.priority === 'critical') && !t.archived_at);
