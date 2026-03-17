@@ -672,7 +672,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         continue;
                     }
                     
-                    const taskData = await taskResponse.json();
+                    const fileData = await taskResponse.json();
+                    const taskData = JSON.parse(atob(fileData.content));
                     
                     // Update task for archiving
                     taskData.archived_at = new Date().toISOString();
@@ -1130,7 +1131,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         headers: { 'Authorization': `token ${token}` }
                     });
             
-            const taskData = await taskResponse.json();
+            const fileData = await taskResponse.json();
+            const taskData = JSON.parse(atob(fileData.content));
             
             // Update task for restoration
             taskData.status = 'pending';
