@@ -708,85 +708,74 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Get all completed tasks
-        try {
-            const cacheBuster = `?t=${Date.now()}`;
-            const completedUrl = `${REPO_URL}/contents/tasks/completed${cacheBuster}`;
-            const response = await fetch(completedUrl, {
-                headers: { 'Authorization': `token ${token}` }
-            });
-            
-            if (response.status === 404) {
-                alert('No completed tasks found.');
-                return;
-            }
-            
-            if (!response.ok) {
-                const error = await response.text();
-                console.error('Error fetching completed tasks:', error);
-                alert('Error fetching completed tasks. Check console.');
-                return;
-            }
-            
-            const completedTasks = await response.json();
-            
-            if (completedTasks.length === 0) {
-                alert('No completed tasks to archive.');
-                return;
-            }
-            
-            let archivedCount = 0;
-            let errors = [];
-            
-            // Move each completed task to archived
-            for (const taskFile of completedTasks) {
+        // Get all completed tasks from local array to bypass GitHub API cache
+        const completedTasks = tasks.filter(t => t.status === 'completed' && !t.archived_at);
+        
+        if (completedTasks.length === 0) {
+            alert('No completed tasks to archive.');
+            return;
+        }
+        
+        let archivedCount = 0;
+        let errors = [];
+        
+        // Move each completed task to archived based on local memory
+        for (const taskData of completedTasks) {
+            try {
+                // Update task for archiving locally
+                taskData.archived_at = new Date().toISOString();
+                taskData.archived_by = 'erdell';
+                taskData.history.push({
+                    timestamp: new Date().toISOString(),
+                    action: 'archived',
+                    by: 'erdell',
+                    notes: 'Moved to archived via archive completed'
+                });
+                
+                const filename = `${taskData.id}.json`;
+                const content = JSON.stringify(taskData, null, 2);
+                const encodedContent = btoa(content);
+                
+                // Create in archived directory
+                const archivedUrl = `${REPO_URL}/contents/tasks/archived/${filename}`;
+                
+                // Check if exist (to get SHA if we are overwriting, though shouldn't happen)
+                let sha = undefined;
                 try {
-                    // Get task content (bypassing cache again)
-                    const fileCacheBuster = `&t=${Date.now()}`;
-                    const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main${fileCacheBuster}`, {
-                        headers: { 'Authorization': `token ${token}` }
-                    });
-                    
-                    if (!taskResponse.ok) {
-                        errors.push(`Failed to read ${taskFile.name}: ${taskResponse.status}`);
-                        continue;
+                    const checkResp = await fetch(archivedUrl, { headers: { 'Authorization': `token ${token}` } });
+                    if (checkResp.ok) {
+                        sha = (await checkResp.json()).sha;
                     }
+                } catch(e) {}
+
+                const createResponse = await fetch(archivedUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: `Archive task: ${taskData.title}`,
+                        content: encodedContent,
+                        ...(sha && { sha: sha })
+                    })
+                });
+                
+                if (createResponse.ok) {
+                    // Try to delete from completed directory, but if it fails don't sweat it too much
+                    const deleteUrl = `${REPO_URL}/contents/tasks/completed/${filename}`;
                     
-                    const fileData = await taskResponse.json();
-                    const taskData = JSON.parse(atob(fileData.content));
+                    // We need the SHA to delete it.
+                    let oldSha = undefined;
+                    try {
+                        const fileCheck = await fetch(deleteUrl, { headers: { 'Authorization': `token ${token}` } });
+                        if (fileCheck.ok) {
+                            oldSha = (await fileCheck.json()).sha;
+                        }
+                    } catch(e) {}
                     
-                    // Update task for archiving
-                    taskData.archived_at = new Date().toISOString();
-                    taskData.archived_by = 'erdell';
-                    taskData.history.push({
-                        timestamp: new Date().toISOString(),
-                        action: 'archived',
-                        by: 'erdell',
-                        notes: 'Moved to archived via archive completed'
-                    });
-                    
-                    const filename = taskFile.name;
-                    const content = JSON.stringify(taskData, null, 2);
-                    const encodedContent = btoa(content);
-                    
-                    // Create in archived directory
-                    const archivedUrl = `${REPO_URL}/contents/tasks/archived/${filename}`;
-                    const createResponse = await fetch(archivedUrl, {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `token ${token}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            message: `Archive task: ${taskData.title}`,
-                            content: encodedContent
-                        })
-                    });
-                    
-                    if (createResponse.ok) {
-                        // Delete from completed directory
-                        const deleteUrl = `${REPO_URL}/contents/tasks/completed/${filename}`;
-                        const deleteResponse = await fetch(deleteUrl, {
+                    if (oldSha) {
+                        await fetch(deleteUrl, {
                             method: 'DELETE',
                             headers: {
                                 'Authorization': `token ${token}`,
@@ -794,50 +783,35 @@ document.addEventListener('DOMContentLoaded', function() {
                             },
                             body: JSON.stringify({
                                 message: `Remove from completed: ${taskData.title}`,
-                                sha: taskFile.sha
+                                sha: oldSha
                             })
                         });
-                        
-                        if (deleteResponse.ok) {
-                            archivedCount++;
-                            console.log(`✅ Archived: ${taskData.title}`);
-                            
-                            // Update the task in the local array to reflect its new state
-                            const taskIndex = tasks.findIndex(t => t.id === taskData.id);
-                            if (taskIndex !== -1) {
-                                tasks[taskIndex] = taskData;
-                            }
-                        } else {
-                            errors.push(`Failed to delete ${filename} from completed`);
-                        }
-                    } else {
-                        errors.push(`Failed to archive ${filename}`);
                     }
-                } catch (error) {
-                    errors.push(`Error processing ${taskFile.name}: ${error.message}`);
-                }
-            }
-            
-            // Show results
-            if (archivedCount > 0) {
-                alert(`✅ Archived ${archivedCount} task(s) to archived directory.`);
-                renderTasks();
-                updateStats();
-            }
-            
-            
-            if (errors.length > 0) {
-                console.error('Archive errors:', errors);
-                if (archivedCount === 0) {
-                    alert(`❌ Failed to archive tasks. Check console for details.`);
+                    
+                    archivedCount++;
+                    console.log(`✅ Archived: ${taskData.title}`);
                 } else {
-                    alert(`⚠️ Archived ${archivedCount} tasks, but had ${errors.length} error(s). Check console.`);
+                    errors.push(`Failed to archive ${filename}`);
                 }
+            } catch (error) {
+                errors.push(`Error processing ${taskData.title}: ${error.message}`);
             }
-            
-        } catch (error) {
-            console.error('Error in clearCompletedTasks:', error);
-            alert('Error archiving tasks. Check console.');
+        }
+        
+        // Show results
+        if (archivedCount > 0) {
+            alert(`✅ Archived ${archivedCount} task(s) to archived directory.`);
+            renderTasks();
+            updateStats();
+        }
+        
+        if (errors.length > 0) {
+            console.error('Archive errors:', errors);
+            if (archivedCount === 0) {
+                alert(`❌ Failed to archive tasks. Check console for details.`);
+            } else {
+                alert(`⚠️ Archived ${archivedCount} tasks, but had ${errors.length} error(s). Check console.`);
+            }
         }
     }
     
