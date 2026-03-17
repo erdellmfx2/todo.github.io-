@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const importDataTextarea = document.getElementById('import-data');
     const copyJsonBtn = document.getElementById('copy-json');
     const importJsonBtn = document.getElementById('import-json');
+    const navSettings = document.getElementById('nav-settings');
     
     // Statistics elements
     const totalTasksEl = document.getElementById('total-tasks');
@@ -84,6 +85,14 @@ document.addEventListener('DOMContentLoaded', function() {
     
     copyJsonBtn.addEventListener('click', copyExportData);
     importJsonBtn.addEventListener('click', importTasksFromJson);
+    
+    if (navSettings) {
+        navSettings.addEventListener('click', function(e) {
+            e.preventDefault();
+            document.querySelector('.token-setup').scrollIntoView({ behavior: 'smooth' });
+            githubTokenInput.focus();
+        });
+    }
     
     // Load GitHub token if exists
     const savedToken = localStorage.getItem('github_repo_token');
@@ -222,8 +231,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     const files = await response.json();
                     for (const file of files) {
                         if (file.name.endsWith('.json')) {
-                            // Also bypass cache when fetching tasks
-                            const taskResponse = await fetch(`${file.download_url}?t=${Date.now()}`);
+                            // Also bypass cache and provide authorization so private repos don't 404
+                            const taskResponse = await fetch(`${file.download_url}?t=${Date.now()}`, {
+                                headers: { 'Authorization': `token ${token}` }
+                            });
                             const task = await taskResponse.json();
                             if (isArchived) {
                                 // Ensure tasks loaded from archived folder are explicitly marked
