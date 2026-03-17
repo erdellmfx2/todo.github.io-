@@ -663,7 +663,7 @@ document.addEventListener('DOMContentLoaded', function() {
             for (const taskFile of completedTasks) {
                 try {
                     // Get task content
-                    const taskResponse = await fetch(taskFile.download_url, {
+                    const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main`, {
                         headers: { 'Authorization': `token ${token}` }
                     });
                     
@@ -1051,9 +1051,9 @@ document.addEventListener('DOMContentLoaded', function() {
             let html = `<h2 style="margin-top: 0;">📦 Archived Tasks (${archivedTasks.length})</h2>`;
             
             for (const taskFile of archivedTasks) {
-                const taskResponse = await fetch(taskFile.download_url, {
-                    headers: { 'Authorization': `token ${token}` }
-                });
+                const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main`, {
+                        headers: { 'Authorization': `token ${token}` }
+                    });
                 
                 if (taskResponse.ok) {
                     const taskData = await taskResponse.json();
@@ -1125,9 +1125,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             const taskFile = await getResponse.json();
-            const taskResponse = await fetch(taskFile.download_url, {
-                headers: { 'Authorization': `token ${token}` }
-            });
+            const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main`, {
+                        headers: { 'Authorization': `token ${token}` }
+                    });
             
             const taskData = await taskResponse.json();
             
