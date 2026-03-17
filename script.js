@@ -1056,7 +1056,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 
                 if (taskResponse.ok) {
-                    const taskData = await taskResponse.json();
+                    const fileData = await taskResponse.json();
+                    const taskData = JSON.parse(atob(fileData.content));
                     
                     html += `
                         <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 5px;">
