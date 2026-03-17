@@ -462,7 +462,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Apply filter
         switch (currentFilter) {
             case 'pending':
-                filteredTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+                filteredTasks = tasks.filter(t => (t.status === 'pending' || t.status === 'in_progress') && !t.archived_at);
                 break;
             case 'completed':
                 filteredTasks = tasks.filter(t => t.status === 'completed' && !t.archived_at);
@@ -745,6 +745,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (deleteResponse.ok) {
                             archivedCount++;
                             console.log(`✅ Archived: ${taskData.title}`);
+                            
+                            // Update the task in the local array to reflect its new state
+                            const taskIndex = tasks.findIndex(t => t.id === taskData.id);
+                            if (taskIndex !== -1) {
+                                tasks[taskIndex] = taskData;
+                            }
                         } else {
                             errors.push(`Failed to delete ${filename} from completed`);
                         }
@@ -761,6 +767,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert(`✅ Archived ${archivedCount} task(s) to archived directory.`);
                 loadTasks(); // Refresh the task list
             }
+            
             
             if (errors.length > 0) {
                 console.error('Archive errors:', errors);
