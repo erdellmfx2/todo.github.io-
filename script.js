@@ -620,23 +620,136 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     async function clearCompletedTasks() {
-        const completedTasks = tasks.filter(t => t.status === 'completed');
-        if (completedTasks.length === 0) return;
-        
-        if (!confirm(`Are you sure you want to clear ${completedTasks.length} completed tasks?`)) return;
-        
-        let deleted = 0;
-        for (const task of completedTasks) {
-            const success = await deleteTaskFromRepository(task.id);
-            if (success) deleted++;
+        if (!confirm('Move all completed tasks to archived? You can restore them later.')) {
+            return;
         }
         
-        // Update local array
-        tasks = tasks.filter(t => t.status !== 'completed');
-        renderTasks();
-        updateStats();
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            alert('Please save your GitHub token first.');
+            return;
+        }
         
-        alert(`Cleared ${deleted} completed tasks`);
+        // Get all completed tasks
+        try {
+            const completedUrl = `${REPO_URL}/contents/tasks/completed`;
+            const response = await fetch(completedUrl, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
+            if (response.status === 404) {
+                alert('No completed tasks found.');
+                return;
+            }
+            
+            if (!response.ok) {
+                const error = await response.text();
+                console.error('Error fetching completed tasks:', error);
+                alert('Error fetching completed tasks. Check console.');
+                return;
+            }
+            
+            const completedTasks = await response.json();
+            
+            if (completedTasks.length === 0) {
+                alert('No completed tasks to archive.');
+                return;
+            }
+            
+            let archivedCount = 0;
+            let errors = [];
+            
+            // Move each completed task to archived
+            for (const taskFile of completedTasks) {
+                try {
+                    // Get task content
+                    const taskResponse = await fetch(taskFile.download_url, {
+                        headers: { 'Authorization': `token ${token}` }
+                    });
+                    
+                    if (!taskResponse.ok) {
+                        errors.push(`Failed to read ${taskFile.name}: ${taskResponse.status}`);
+                        continue;
+                    }
+                    
+                    const taskData = await taskResponse.json();
+                    
+                    // Update task for archiving
+                    taskData.archived_at = new Date().toISOString();
+                    taskData.archived_by = 'erdell';
+                    taskData.history.push({
+                        timestamp: new Date().toISOString(),
+                        action: 'archived',
+                        by: 'erdell',
+                        notes: 'Moved to archived via archive completed'
+                    });
+                    
+                    const filename = taskFile.name;
+                    const content = JSON.stringify(taskData, null, 2);
+                    const encodedContent = btoa(content);
+                    
+                    // Create in archived directory
+                    const archivedUrl = `${REPO_URL}/contents/tasks/archived/${filename}`;
+                    const createResponse = await fetch(archivedUrl, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: `Archive task: ${taskData.title}`,
+                            content: encodedContent
+                        })
+                    });
+                    
+                    if (createResponse.ok) {
+                        // Delete from completed directory
+                        const deleteUrl = `${REPO_URL}/contents/tasks/completed/${filename}`;
+                        const deleteResponse = await fetch(deleteUrl, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `token ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                message: `Remove from completed: ${taskData.title}`,
+                                sha: taskFile.sha
+                            })
+                        });
+                        
+                        if (deleteResponse.ok) {
+                            archivedCount++;
+                            console.log(`✅ Archived: ${taskData.title}`);
+                        } else {
+                            errors.push(`Failed to delete ${filename} from completed`);
+                        }
+                    } else {
+                        errors.push(`Failed to archive ${filename}`);
+                    }
+                } catch (error) {
+                    errors.push(`Error processing ${taskFile.name}: ${error.message}`);
+                }
+            }
+            
+            // Show results
+            if (archivedCount > 0) {
+                alert(`✅ Archived ${archivedCount} task(s) to archived directory.`);
+                loadTasks(); // Refresh the task list
+            }
+            
+            if (errors.length > 0) {
+                console.error('Archive errors:', errors);
+                if (archivedCount === 0) {
+                    alert(`❌ Failed to archive tasks. Check console for details.`);
+                } else {
+                    alert(`⚠️ Archived ${archivedCount} tasks, but had ${errors.length} error(s). Check console.`);
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error in clearCompletedTasks:', error);
+            alert('Error archiving tasks. Check console.');
+        }
     }
     
     function updateStats() {
@@ -888,4 +1001,227 @@ document.addEventListener('DOMContentLoaded', function() {
             dueDate: t.due_date
         }))));
     });
-});
+
+    
+    // ======================
+    // ARCHIVE SYSTEM FUNCTIONS
+    // ======================
+    
+    async function showArchivedTasks() {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            alert('Please save your GitHub token first.');
+            return;
+        }
+        
+        try {
+            const archivedUrl = `${REPO_URL}/contents/tasks/archived`;
+            const response = await fetch(archivedUrl, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
+            if (response.status === 404) {
+                alert('No archived tasks found.');
+                return;
+            }
+            
+            if (!response.ok) {
+                const error = await response.text();
+                console.error('Error fetching archived tasks:', error);
+                alert('Error fetching archived tasks. Check console.');
+                return;
+            }
+            
+            const archivedTasks = await response.json();
+            
+            if (archivedTasks.length === 0) {
+                alert('No archived tasks found.');
+                return;
+            }
+            
+            // Create modal for archived tasks
+            const modal = document.createElement('div');
+            modal.className = 'archive-modal';
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+            
+            const modalContent = document.createElement('div');
+            modalContent.className = 'archive-modal-content';
+            modalContent.style.cssText = 'background: white; padding: 20px; border-radius: 10px; max-width: 600px; max-height: 80vh; overflow-y: auto; width: 90%;';
+            
+            let html = `<h2 style="margin-top: 0;">📦 Archived Tasks (${archivedTasks.length})</h2>`;
+            
+            for (const taskFile of archivedTasks) {
+                const taskResponse = await fetch(taskFile.download_url, {
+                    headers: { 'Authorization': `token ${token}` }
+                });
+                
+                if (taskResponse.ok) {
+                    const taskData = await taskResponse.json();
+                    
+                    html += `
+                        <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 5px;">
+                            <h3 style="margin: 0 0 5px 0;">${taskData.title}</h3>
+                            <p style="margin: 0 0 5px 0; color: #666;">${taskData.description || 'No description'}</p>
+                            <div style="font-size: 12px; color: #888;">
+                                Archived: ${new Date(taskData.archived_at).toLocaleDateString()}<br>
+                                Originally created: ${new Date(taskData.created_at).toLocaleDateString()}
+                            </div>
+                            <button onclick="restoreArchivedTask('${taskFile.name}')" 
+                                    style="margin-top: 10px; padding: 5px 10px; background: #2ea44f; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                🔄 Restore to Active
+                            </button>
+                        </div>
+                    `;
+                }
+            }
+            
+            html += `
+                <div style="margin-top: 20px; text-align: right;">
+                    <button onclick="this.closest('.archive-modal').remove()" 
+                            style="padding: 8px 16px; background: #ddd; border: none; border-radius: 3px; cursor: pointer;">
+                        Close
+                    </button>
+                </div>
+            `;
+            
+            modalContent.innerHTML = html;
+            modal.appendChild(modalContent);
+            document.body.appendChild(modal);
+            
+            // Close modal when clicking outside
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+            
+        } catch (error) {
+            console.error('Error showing archived tasks:', error);
+            alert('Error loading archived tasks. Check console.');
+        }
+    }
+    
+    async function restoreArchivedTask(filename) {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            alert('Please save your GitHub token first.');
+            return;
+        }
+        
+        if (!confirm('Restore this task to active tasks?')) {
+            return;
+        }
+        
+        try {
+            // Get archived task
+            const archivedUrl = `${REPO_URL}/contents/tasks/archived/${filename}`;
+            const getResponse = await fetch(archivedUrl, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
+            if (!getResponse.ok) {
+                alert('Failed to get archived task.');
+                return;
+            }
+            
+            const taskFile = await getResponse.json();
+            const taskResponse = await fetch(taskFile.download_url, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
+            const taskData = await taskResponse.json();
+            
+            // Update task for restoration
+            taskData.status = 'pending';
+            delete taskData.archived_at;
+            delete taskData.archived_by;
+            taskData.history.push({
+                timestamp: new Date().toISOString(),
+                action: 'restored',
+                by: 'erdell',
+                notes: 'Restored from archived'
+            });
+            
+            const content = JSON.stringify(taskData, null, 2);
+            const encodedContent = btoa(content);
+            
+            // Create in active directory
+            const activeUrl = `${REPO_URL}/contents/tasks/active/${filename}`;
+            const createResponse = await fetch(activeUrl, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: `Restore task: ${taskData.title}`,
+                    content: encodedContent
+                })
+            });
+            
+            if (createResponse.ok) {
+                // Delete from archived
+                const deleteResponse = await fetch(archivedUrl, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: `Remove from archived: ${taskData.title}`,
+                        sha: taskFile.sha
+                    })
+                });
+                
+                if (deleteResponse.ok) {
+                    alert(`✅ Restored: ${taskData.title}`);
+                    
+                    // Close modal and refresh
+                    const modal = document.querySelector('.archive-modal');
+                    if (modal) modal.remove();
+                    
+                    loadTasks();
+                } else {
+                    alert('Restored but failed to remove from archived.');
+                }
+            } else {
+                alert('Failed to restore task.');
+            }
+            
+        } catch (error) {
+            console.error('Error restoring task:', error);
+            alert('Error restoring task. Check console.');
+        }
+    }
+    
+    // Add "View Archived" button to UI
+    function addArchiveButton() {
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+        
+        // Check if button already exists
+        if (document.getElementById('view-archived-btn')) return;
+        
+        const archiveBtn = document.createElement('button');
+        archiveBtn.id = 'view-archived-btn';
+        archiveBtn.className = 'btn btn-secondary';
+        archiveBtn.innerHTML = '<i class="fas fa-archive"></i> View Archived';
+        archiveBtn.style.marginTop = '10px';
+        archiveBtn.onclick = showArchivedTasks;
+        
+        sidebar.appendChild(archiveBtn);
+    }
+    
+    // Update clear completed button text
+    function updateClearButtonText() {
+        const clearBtn = document.getElementById('clear-completed');
+        if (clearBtn) {
+            clearBtn.innerHTML = '<i class="fas fa-archive"></i> Archive Completed';
+            clearBtn.title = 'Move completed tasks to archived (can be restored later)';
+        }
+    }
+    
+    // Initialize archive system
+    addArchiveButton();
+    updateClearButtonText();
+    });
