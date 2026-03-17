@@ -122,8 +122,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     migrateLocalTasksToRepository();
                 }
             } else {
-                // Add sample task if no tasks exist
-                addSampleTask();
+                // Return an empty list if no tasks exist
+                tasks = [];
             }
         }
         
@@ -654,7 +654,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Get all completed tasks
         try {
-            const completedUrl = `${REPO_URL}/contents/tasks/completed`;
+            const cacheBuster = `?t=${Date.now()}`;
+            const completedUrl = `${REPO_URL}/contents/tasks/completed${cacheBuster}`;
             const response = await fetch(completedUrl, {
                 headers: { 'Authorization': `token ${token}` }
             });
@@ -684,8 +685,9 @@ document.addEventListener('DOMContentLoaded', function() {
             // Move each completed task to archived
             for (const taskFile of completedTasks) {
                 try {
-                    // Get task content
-                    const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main`, {
+                    // Get task content (bypassing cache again)
+                    const fileCacheBuster = `&t=${Date.now()}`;
+                    const taskResponse = await fetch(`${REPO_URL}/contents/tasks/completed/${taskFile.name}?ref=main${fileCacheBuster}`, {
                         headers: { 'Authorization': `token ${token}` }
                     });
                     
