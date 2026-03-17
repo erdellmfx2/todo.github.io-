@@ -413,8 +413,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const token = localStorage.getItem('github_repo_token');
         if (!token) return false;
         
-        // Try both directories
-        const directories = ['active', 'completed'];
+        // Try all three directories
+        const directories = ['active', 'completed', 'archived'];
         
         for (const directory of directories) {
             const url = `${REPO_URL}/contents/tasks/${directory}/${taskId}.json`;
@@ -461,7 +461,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Apply filter
         switch (currentFilter) {
-            case 'active':
+            case 'pending':
                 filteredTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
                 break;
             case 'completed':
