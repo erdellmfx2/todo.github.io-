@@ -231,24 +231,30 @@ document.addEventListener('DOMContentLoaded', function() {
                     const files = await response.json();
                     for (const file of files) {
                         if (file.name.endsWith('.json')) {
-                            // Also bypass cache and provide authorization so private repos don't 404
-                            const taskResponse = await fetch(`${file.download_url}?t=${Date.now()}`, {
+                            // Fetch via GitHub API contents URL to avoid CORS blocking on raw downloads
+                            const cacheBusterParam = file.url.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
+                            const taskResponse = await fetch(`${file.url}${cacheBusterParam}`, {
                                 headers: { 'Authorization': `token ${token}` }
                             });
-                            const task = await taskResponse.json();
-                            if (isArchived) {
-                                // Ensure tasks loaded from archived folder are explicitly marked
-                                task.archived_at = task.archived_at || new Date().toISOString();
-                            }
                             
-                            // Handle GitHub API cache returning the same task from multiple directories
-                            const existingIndex = tasks.findIndex(t => t.id === task.id);
-                            if (existingIndex !== -1) {
+                            if (taskResponse.ok) {
+                                const taskApiData = await taskResponse.json();
+                                const task = JSON.parse(atob(taskApiData.content.replace(/\n/g, '')));
+                                
                                 if (isArchived) {
-                                    tasks[existingIndex] = task; // Archived copy takes precedence over completed
+                                    // Ensure tasks loaded from archived folder are explicitly marked
+                                    task.archived_at = task.archived_at || new Date().toISOString();
                                 }
-                            } else {
-                                tasks.push(task);
+                                
+                                // Handle GitHub API cache returning the same task from multiple directories
+                                const existingIndex = tasks.findIndex(t => t.id === task.id);
+                                if (existingIndex !== -1) {
+                                    if (isArchived) {
+                                        tasks[existingIndex] = task; // Archived copy takes precedence over completed
+                                    }
+                                } else {
+                                    tasks.push(task);
+                                }
                             }
                         }
                     }
