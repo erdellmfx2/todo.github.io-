@@ -216,13 +216,17 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const tasks = [];
             
-            const processDirectoryResponse = async (response) => {
+            const processDirectoryResponse = async (response, isArchived = false) => {
                 if (response.ok) {
                     const files = await response.json();
                     for (const file of files) {
                         if (file.name.endsWith('.json')) {
                             const taskResponse = await fetch(file.download_url);
                             const task = await taskResponse.json();
+                            if (isArchived) {
+                                // Ensure tasks loaded from archived folder are explicitly marked
+                                task.archived_at = task.archived_at || new Date().toISOString();
+                            }
                             tasks.push(task);
                         }
                     }
@@ -231,7 +235,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             await processDirectoryResponse(activeResponse);
             await processDirectoryResponse(completedResponse);
-            await processDirectoryResponse(archivedResponse);
+            await processDirectoryResponse(archivedResponse, true);
             
             return tasks;
         } catch (error) {
@@ -465,7 +469,7 @@ document.addEventListener('DOMContentLoaded', function() {
             case 'all':
             default:
                 // For 'all', we typically want to hide archived unless we specifically chose the archived filter
-                filteredTasks = tasks.filter(t => !t.archived_at);
+                filteredTasks = tasks.filter(t => !t.archived_at && t.status !== 'archived');
                 break;
         }
         
