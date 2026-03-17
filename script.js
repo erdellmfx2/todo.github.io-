@@ -1,4 +1,4 @@
-// GitHub To-Do List - JavaScript
+// GitHub To-Do List - JavaScript with Repository Integration
 document.addEventListener('DOMContentLoaded', function() {
     // DOM Elements
     const newTaskInput = document.getElementById('new-task');
@@ -30,40 +30,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const overdueTasksEl = document.getElementById('overdue-tasks');
     const currentDateEl = document.getElementById('current-date');
     
+    // Repository configuration
+    const REPO_OWNER = 'erdellmfx2';
+    const REPO_NAME = 'todo-manager';
+    const REPO_URL = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
+    const TASKS_ACTIVE_URL = `${REPO_URL}/contents/tasks/active`;
+    const TASKS_COMPLETED_URL = `${REPO_URL}/contents/tasks/completed`;
+    
     // State
-    let tasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
-    
-    // Load GitHub token if exists
-    const savedToken = localStorage.getItem('github_gist_token');
-    if (savedToken && githubTokenInput) {
-        githubTokenInput.value = savedToken;
-    }
-    
-    // Add sample patent task if no tasks exist (first-time users)
-    if (tasks.length === 0) {
-        // Set due date to tomorrow at 10:00 AM
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(10, 0, 0, 0);
-        
-        const patentTask = {
-            id: Date.now(),
-            title: "Check on my patent tomorrow at 10 AM",
-            completed: false,
-            priority: "high",
-            createdAt: new Date().toISOString(),
-            completedAt: null,
-            dueDate: tomorrow.toISOString()
-        };
-        tasks.push(patentTask);
-        localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
-    }
-    
+    let tasks = [];
     let currentFilter = 'all';
     
     // Initialize
     updateCurrentDate();
-    renderTasks();
+    loadTasks();
     updateStats();
     
     // Event Listeners
@@ -98,163 +78,451 @@ document.addEventListener('DOMContentLoaded', function() {
                 content.classList.remove('active');
             });
             document.getElementById(`${tabId}-tab`).classList.add('active');
-            
-            if (tabId === 'export') {
-                updateExportData();
-            }
         });
     });
     
-    copyJsonBtn.addEventListener('click', copyToClipboard);
+    copyJsonBtn.addEventListener('click', copyExportData);
     importJsonBtn.addEventListener('click', importTasksFromJson);
     
-    // Close modal when clicking outside
-    window.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeModalWindow();
+    // Load GitHub token if exists
+    const savedToken = localStorage.getItem('github_repo_token');
+    if (savedToken && githubTokenInput) {
+        githubTokenInput.value = savedToken;
+        // Update sync button text
+        if (syncLitebotBtn) {
+            syncLitebotBtn.innerHTML = '<i class="fas fa-check-circle"></i> Auto-sync enabled';
+            syncLitebotBtn.classList.add('btn-success');
         }
-    });
+    }
     
     // Functions
+    
     function updateCurrentDate() {
         const now = new Date();
         const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
         currentDateEl.textContent = now.toLocaleDateString('en-US', options);
     }
     
-    function addTask() {
+    async function loadTasks() {
+        // Try to load from repository first
+        const repoTasks = await loadTasksFromRepository();
+        if (repoTasks.length > 0) {
+            tasks = repoTasks;
+            console.log(`Loaded ${tasks.length} tasks from repository`);
+        } else {
+            // Fallback to localStorage for migration
+            const localTasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
+            if (localTasks.length > 0) {
+                tasks = localTasks.map(convertOldTaskFormat);
+                console.log(`Loaded ${tasks.length} tasks from localStorage (migrating)`);
+                // Auto-migrate if we have a token
+                const token = localStorage.getItem('github_repo_token');
+                if (token) {
+                    migrateLocalTasksToRepository();
+                }
+            } else {
+                // Add sample task if no tasks exist
+                addSampleTask();
+            }
+        }
+        
+        renderTasks();
+        updateStats();
+    }
+    
+    function convertOldTaskFormat(oldTask) {
+        return {
+            id: `task-${oldTask.id || Date.now() + Math.random()}`,
+            title: oldTask.title,
+            description: "",
+            status: oldTask.completed ? "completed" : "pending",
+            priority: oldTask.priority || "medium",
+            created_by: "erdell",
+            created_at: oldTask.createdAt || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            assigned_to: ["lite_bot"],
+            due_date: oldTask.dueDate || null,
+            tags: [],
+            estimated_time: null,
+            dependencies: [],
+            history: [
+                {
+                    action: "created",
+                    by: "erdell",
+                    at: oldTask.createdAt || new Date().toISOString(),
+                    notes: `Migrated from old system: ${oldTask.title}`
+                }
+            ],
+            notes: ""
+        };
+    }
+    
+    function addSampleTask() {
+        // Set due date to tomorrow at 10:00 AM
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(10, 0, 0, 0);
+        
+        const sampleTask = {
+            id: `task-${Date.now()}`,
+            title: "Check on my patent tomorrow at 10 AM",
+            description: "",
+            status: "pending",
+            priority: "high",
+            created_by: "erdell",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            assigned_to: ["lite_bot"],
+            due_date: tomorrow.toISOString(),
+            tags: ["sample", "reminder"],
+            estimated_time: "30 minutes",
+            dependencies: [],
+            history: [
+                {
+                    action: "created",
+                    by: "system",
+                    at: new Date().toISOString(),
+                    notes: "Sample task for first-time users"
+                }
+            ],
+            notes: "This is a sample task. Edit or delete it as needed."
+        };
+        
+        tasks.push(sampleTask);
+        saveTaskToRepository(sampleTask, "create");
+    }
+    
+    async function loadTasksFromRepository() {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            console.log('No GitHub token found');
+            return [];
+        }
+        
+        try {
+            // Load from both active and completed directories
+            const [activeResponse, completedResponse] = await Promise.all([
+                fetch(`${TASKS_ACTIVE_URL}`, {
+                    headers: { 'Authorization': `token ${token}` }
+                }),
+                fetch(`${TASKS_COMPLETED_URL}`, {
+                    headers: { 'Authorization': `token ${token}` }
+                })
+            ]);
+            
+            const tasks = [];
+            
+            if (activeResponse.ok) {
+                const activeFiles = await activeResponse.json();
+                for (const file of activeFiles) {
+                    if (file.name.endsWith('.json')) {
+                        const taskResponse = await fetch(file.download_url);
+                        const task = await taskResponse.json();
+                        tasks.push(task);
+                    }
+                }
+            }
+            
+            if (completedResponse.ok) {
+                const completedFiles = await completedResponse.json();
+                for (const file of completedFiles) {
+                    if (file.name.endsWith('.json')) {
+                        const taskResponse = await fetch(file.download_url);
+                        const task = await taskResponse.json();
+                        tasks.push(task);
+                    }
+                }
+            }
+            
+            return tasks;
+        } catch (error) {
+            console.error('Error loading tasks from repository:', error);
+            return [];
+        }
+    }
+    
+    async function migrateLocalTasksToRepository() {
+        const localTasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
+        if (localTasks.length === 0) return;
+        
+        console.log(`Migrating ${localTasks.length} tasks to repository...`);
+        
+        let migrated = 0;
+        for (const oldTask of localTasks) {
+            const newTask = convertOldTaskFormat(oldTask);
+            const success = await saveTaskToRepository(newTask, "migrate");
+            if (success) migrated++;
+        }
+        
+        console.log(`Migration complete: ${migrated}/${localTasks.length} tasks migrated`);
+        
+        // Clear old localStorage after successful migration
+        if (migrated > 0) {
+            localStorage.removeItem('github-todo-tasks');
+            localStorage.setItem('tasks_migrated', 'true');
+        }
+    }
+    
+    async function addTask() {
         const title = newTaskInput.value.trim();
         if (!title) {
-            alert('Please enter a task title');
             newTaskInput.focus();
             return;
         }
         
         const task = {
-            id: Date.now(),
+            id: `task-${Date.now()}`,
             title: title,
-            priority: prioritySelect.value,
-            completed: false,
-            createdAt: new Date().toISOString(),
-            completedAt: null,
-            dueDate: dueDateInput.value ? new Date(dueDateInput.value).toISOString() : null
+            description: "",
+            status: "pending",
+            priority: prioritySelect.value || "medium",
+            created_by: "erdell",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            assigned_to: ["lite_bot"],
+            due_date: dueDateInput.value || null,
+            tags: [],
+            estimated_time: null,
+            dependencies: [],
+            history: [
+                {
+                    action: "created",
+                    by: "erdell",
+                    at: new Date().toISOString(),
+                    notes: `Task created: ${title}`
+                }
+            ],
+            notes: ""
         };
         
-        tasks.unshift(task); // Add to beginning
-        saveTasks();
-        renderTasks();
-        updateStats();
+        // Save to repository
+        const success = await saveTaskToRepository(task, "create");
+        if (success) {
+            tasks.push(task);
+            renderTasks();
+            updateStats();
+            newTaskInput.value = '';
+            newTaskInput.focus();
+            
+            // Reset due date
+            dueDateInput.value = '';
+        } else {
+            alert('Failed to save task to repository. Check your GitHub token.');
+        }
+    }
+    
+    async function saveTaskToRepository(task, action = "update") {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            console.log('No GitHub token found');
+            return false;
+        }
         
-        // Reset input
-        newTaskInput.value = '';
-        newTaskInput.focus();
-        prioritySelect.value = 'medium';
-        dueDateInput.value = '';
-    }
-    
-    function toggleTaskCompletion(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (task) {
-            task.completed = !task.completed;
-            task.completedAt = task.completed ? new Date().toISOString() : null;
-            saveTasks();
-            renderTasks();
-            updateStats();
-        }
-    }
-    
-    function deleteTask(taskId) {
-        if (confirm('Are you sure you want to delete this task?')) {
-            tasks = tasks.filter(t => t.id !== taskId);
-            saveTasks();
-            renderTasks();
-            updateStats();
-        }
-    }
-    
-    function editTask(taskId) {
-        const task = tasks.find(t => t.id === taskId);
-        if (!task) return;
+        const filename = `${task.id}.json`;
+        const content = JSON.stringify(task, null, 2);
+        const encodedContent = btoa(content);
         
-        const newTitle = prompt('Edit task title:', task.title);
-        if (newTitle !== null && newTitle.trim() !== '') {
-            task.title = newTitle.trim();
-            saveTasks();
-            renderTasks();
+        // Determine directory based on status
+        const directory = task.status === "completed" ? "completed" : "active";
+        const url = `${REPO_URL}/contents/tasks/${directory}/${filename}`;
+        
+        try {
+            // Check if file exists
+            const checkResponse = await fetch(url, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
+            let sha = null;
+            if (checkResponse.status === 200) {
+                // File exists, get its SHA
+                const existingFile = await checkResponse.json();
+                sha = existingFile.sha;
+                console.log(`File exists, SHA: ${sha.substring(0, 8)}...`);
+            } else if (checkResponse.status === 404) {
+                // File doesn't exist (normal for new tasks)
+                console.log('File does not exist, will create new');
+            } else {
+                // Some other error
+                console.error('Error checking file:', checkResponse.status, await checkResponse.text());
+                return false;
+            }
+            
+            // Prepare request data
+            const requestData = {
+                message: `${action} task: ${task.title}`,
+                content: encodedContent
+            };
+            
+            // Only include SHA if file exists (for updates)
+            if (sha) {
+                requestData.sha = sha;
+            }
+            
+            // GitHub API always uses PUT for creating/updating files
+            const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestData)
+            });
+            
+            if (response.ok) {
+                console.log(`Task ${action}d successfully: ${task.id}`);
+                return true;
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to save task:', errorText);
+                
+                // Show user-friendly error
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson.message.includes('Invalid request')) {
+                        alert('Failed to save task. Please check your GitHub token has "repo" scope.');
+                    } else {
+                        alert(`Failed to save task: ${errorJson.message}`);
+                    }
+                } catch {
+                    alert('Failed to save task to repository. Check your GitHub token.');
+                }
+                return false;
+            }
+        } catch (error) {
+            console.error('Error saving task:', error);
+            alert('Network error saving task. Check your connection.');
+            return false;
         }
     }
     
-    function clearCompletedTasks() {
-        if (confirm('Are you sure you want to clear all completed tasks?')) {
-            tasks = tasks.filter(t => !t.completed);
-            saveTasks();
-            renderTasks();
-            updateStats();
+    async function deleteTaskFromRepository(taskId) {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) return false;
+        
+        // Try both directories
+        const directories = ['active', 'completed'];
+        
+        for (const directory of directories) {
+            const url = `${REPO_URL}/contents/tasks/${directory}/${taskId}.json`;
+            
+            try {
+                // Check if file exists
+                const checkResponse = await fetch(url, {
+                    headers: { 'Authorization': `token ${token}` }
+                });
+                
+                if (checkResponse.ok) {
+                    const existingFile = await checkResponse.json();
+                    const sha = existingFile.sha;
+                    
+                    const deleteResponse = await fetch(url, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: `Delete task: ${taskId}`,
+                            sha: sha
+                        })
+                    });
+                    
+                    if (deleteResponse.ok) {
+                        console.log(`Task deleted successfully: ${taskId}`);
+                        return true;
+                    }
+                }
+            } catch (error) {
+                console.error(`Error checking/deleteing from ${directory}:`, error);
+            }
         }
-    }
-    
-    function saveTasks() {
-        localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
+        
+        return false;
     }
     
     function renderTasks() {
-        // Filter tasks based on current filter
+        todoList.innerHTML = '';
+        
         let filteredTasks = tasks;
         
+        // Apply filter
         switch (currentFilter) {
-            case 'pending':
-                filteredTasks = tasks.filter(t => !t.completed);
+            case 'active':
+                filteredTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
                 break;
             case 'completed':
-                filteredTasks = tasks.filter(t => t.completed);
+                filteredTasks = tasks.filter(t => t.status === 'completed');
                 break;
             case 'high':
                 filteredTasks = tasks.filter(t => t.priority === 'high' || t.priority === 'critical');
                 break;
+            case 'today':
+                const today = new Date().toISOString().split('T')[0];
+                filteredTasks = tasks.filter(t => t.due_date && t.due_date.startsWith(today));
+                break;
         }
         
-        // Clear the list
-        todoList.innerHTML = '';
-        
-        // Show empty state if no tasks
         if (filteredTasks.length === 0) {
-            const emptyState = document.createElement('div');
-            emptyState.className = 'empty-state';
-            emptyState.innerHTML = `
-                <i class="fas fa-clipboard-list"></i>
-                <h3>No tasks found</h3>
-                <p>${tasks.length === 0 ? 'Add your first to-do item above to get started!' : 'No tasks match the current filter'}</p>
+            todoList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-clipboard-list"></i>
+                    <h3>No tasks found</h3>
+                    <p>${currentFilter === 'all' ? 'Add your first task above!' : 'No tasks match this filter.'}</p>
+                </div>
             `;
-            todoList.appendChild(emptyState);
             return;
         }
         
-        // Render each task
+        // Sort by priority (critical > high > medium > low) then by creation date
+        const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        filteredTasks.sort((a, b) => {
+            const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+            if (priorityDiff !== 0) return priorityDiff;
+            return new Date(a.created_at) - new Date(b.created_at);
+        });
+        
         filteredTasks.forEach(task => {
             const taskEl = document.createElement('div');
-            taskEl.className = `todo-item ${task.completed ? 'completed' : ''}`;
+            taskEl.className = `todo-item ${task.status === 'completed' ? 'completed' : ''} priority-${task.priority}`;
+            taskEl.dataset.id = task.id;
+            
+            const priorityClass = `priority-${task.priority}`;
+            const priorityText = task.priority.charAt(0).toUpperCase() + task.priority.slice(1);
+            
+            let dueDateText = '';
+            if (task.due_date) {
+                const dueDate = new Date(task.due_date);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                if (dueDate < today && task.status !== 'completed') {
+                    dueDateText = `<span class="due-date overdue">Overdue: ${dueDate.toLocaleDateString()}</span>`;
+                } else {
+                    dueDateText = `<span class="due-date">Due: ${dueDate.toLocaleDateString()}</span>`;
+                }
+            }
+            
             taskEl.innerHTML = `
                 <div class="todo-checkbox">
-                    <input type="checkbox" ${task.completed ? 'checked' : ''}>
+                    <input type="checkbox" id="task-${task.id}" ${task.status === 'completed' ? 'checked' : ''}>
+                    <label for="task-${task.id}"></label>
                 </div>
                 <div class="todo-content">
-                    <div class="todo-title ${task.completed ? 'completed' : ''}">
-                        ${task.title}
-                        <span class="todo-priority priority-${task.priority}">
-                            ${getPriorityLabel(task.priority)}
-                        </span>
+                    <div class="todo-header">
+                        <h3 class="todo-title">${escapeHtml(task.title)}</h3>
+                        <span class="priority-badge ${priorityClass}">${priorityText}</span>
                     </div>
+                    ${task.description ? `<p class="todo-description">${escapeHtml(task.description)}</p>` : ''}
                     <div class="todo-meta">
-                        <span><i class="far fa-calendar"></i> ${formatDate(task.createdAt)}</span>
-                        ${task.dueDate ? `<span><i class="far fa-clock"></i> Due: ${formatDateTime(task.dueDate)}</span>` : ''}
-                        ${task.completed ? `<span><i class="far fa-check-circle"></i> Completed: ${formatDate(task.completedAt)}</span>` : ''}
+                        ${dueDateText}
+                        <span class="task-id">${task.id}</span>
                     </div>
                 </div>
                 <div class="todo-actions">
-                    <button class="todo-action-btn edit-btn" title="Edit">
+                    <button class="btn-icon edit-btn" title="Edit task">
                         <i class="fas fa-edit"></i>
                     </button>
-                    <button class="todo-action-btn delete-btn" title="Delete">
+                    <button class="btn-icon delete-btn" title="Delete task">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
@@ -262,263 +530,303 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Add event listeners
             const checkbox = taskEl.querySelector('input[type="checkbox"]');
-            const editBtn = taskEl.querySelector('.edit-btn');
-            const deleteBtn = taskEl.querySelector('.delete-btn');
+            checkbox.addEventListener('change', () => toggleTaskComplete(task.id));
             
-            checkbox.addEventListener('change', () => toggleTaskCompletion(task.id));
+            const editBtn = taskEl.querySelector('.edit-btn');
             editBtn.addEventListener('click', () => editTask(task.id));
+            
+            const deleteBtn = taskEl.querySelector('.delete-btn');
             deleteBtn.addEventListener('click', () => deleteTask(task.id));
             
             todoList.appendChild(taskEl);
         });
     }
     
+    async function toggleTaskComplete(taskId) {
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            const oldStatus = task.status;
+            task.status = task.status === 'completed' ? 'pending' : 'completed';
+            task.updated_at = new Date().toISOString();
+            
+            task.history.push({
+                action: "status_update",
+                by: "erdell",
+                at: new Date().toISOString(),
+                notes: `Task ${task.status === 'completed' ? 'completed' : 'reopened'}`,
+                old_status: oldStatus,
+                new_status: task.status
+            });
+            
+            // Save to repository
+            const success = await saveTaskToRepository(task, "update");
+            if (success) {
+                renderTasks();
+                updateStats();
+            } else {
+                // Revert on error
+                task.status = oldStatus;
+                task.history.pop();
+                alert('Failed to update task in repository. Check your GitHub token.');
+            }
+        }
+    }
+    
+    async function editTask(taskId) {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        
+        const newTitle = prompt('Edit task title:', task.title);
+        if (newTitle === null) return; // User cancelled
+        
+        if (newTitle.trim()) {
+            const oldTitle = task.title;
+            task.title = newTitle.trim();
+            task.updated_at = new Date().toISOString();
+            
+            task.history.push({
+                action: "edit",
+                by: "erdell",
+                at: new Date().toISOString(),
+                notes: `Title changed from "${oldTitle}" to "${task.title}"`
+            });
+            
+            // Save to repository
+            const success = await saveTaskToRepository(task, "edit");
+            if (success) {
+                renderTasks();
+            } else {
+                // Revert on error
+                task.title = oldTitle;
+                task.history.pop();
+                alert('Failed to update task in repository. Check your GitHub token.');
+            }
+        }
+    }
+    
+    async function deleteTask(taskId) {
+        if (!confirm('Are you sure you want to delete this task?')) return;
+        
+        // Delete from repository
+        const success = await deleteTaskFromRepository(taskId);
+        if (success) {
+            // Remove from local array
+            tasks = tasks.filter(t => t.id !== taskId);
+            renderTasks();
+            updateStats();
+        } else {
+            alert('Failed to delete task from repository. It may have already been deleted.');
+        }
+    }
+    
+    async function clearCompletedTasks() {
+        const completedTasks = tasks.filter(t => t.status === 'completed');
+        if (completedTasks.length === 0) return;
+        
+        if (!confirm(`Are you sure you want to clear ${completedTasks.length} completed tasks?`)) return;
+        
+        let deleted = 0;
+        for (const task of completedTasks) {
+            const success = await deleteTaskFromRepository(task.id);
+            if (success) deleted++;
+        }
+        
+        // Update local array
+        tasks = tasks.filter(t => t.status !== 'completed');
+        renderTasks();
+        updateStats();
+        
+        alert(`Cleared ${deleted} completed tasks`);
+    }
+    
     function updateStats() {
+        const now = new Date();
+        const today = now.toISOString().split('T')[0];
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        
         const total = tasks.length;
-        const completed = tasks.filter(t => t.completed).length;
+        const completed = tasks.filter(t => t.status === 'completed').length;
         const pending = total - completed;
+        
+        const todayTasks = tasks.filter(t => {
+            if (!t.created_at) return false;
+            const createdDate = new Date(t.created_at).toISOString().split('T')[0];
+            return createdDate === today;
+        }).length;
+        
+        const weekTasks = tasks.filter(t => {
+            if (!t.created_at) return false;
+            const createdDate = new Date(t.created_at);
+            return createdDate >= weekAgo;
+        }).length;
+        
+        const overdueTasks = tasks.filter(t => {
+            if (t.status === 'completed' || !t.due_date) return false;
+            const dueDate = new Date(t.due_date);
+            return dueDate < now;
+        }).length;
         
         totalTasksEl.textContent = total;
         completedTasksEl.textContent = completed;
         pendingTasksEl.textContent = pending;
-        
-        // Calculate today's tasks
-        const today = new Date().toDateString();
-        const todayTasks = tasks.filter(t => {
-            const taskDate = new Date(t.createdAt).toDateString();
-            return taskDate === today;
-        }).length;
         todayTasksEl.textContent = todayTasks;
-        
-        // Calculate this week's tasks
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-        const weekTasks = tasks.filter(t => {
-            const taskDate = new Date(t.createdAt);
-            return taskDate >= oneWeekAgo;
-        }).length;
         weekTasksEl.textContent = weekTasks;
-        
-        // Calculate overdue tasks (tasks with due date in past and not completed)
-        const overdueTasks = tasks.filter(t => {
-            if (t.completed) return false;
-            if (t.dueDate) {
-                const dueDate = new Date(t.dueDate);
-                return dueDate < new Date();
-            }
-            // Fallback: tasks created more than 7 days ago
-            const taskDate = new Date(t.createdAt);
-            const daysOld = (Date.now() - taskDate.getTime()) / (1000 * 60 * 60 * 24);
-            return daysOld > 7;
-        }).length;
         overdueTasksEl.textContent = overdueTasks;
     }
     
-    function getPriorityLabel(priority) {
-        const labels = {
-            'low': 'Low',
-            'medium': 'Medium',
-            'high': 'High',
-            'critical': 'Critical'
-        };
-        return labels[priority] || 'Medium';
-    }
-    
-    function formatDate(dateString) {
-        if (!dateString) return 'N/A';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { 
-            month: 'short', 
-            day: 'numeric',
-            year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
-        });
-    }
-    
-    function formatDateTime(dateString) {
-        if (!dateString) return 'N/A';
-        const date = new Date(dateString);
-        const now = new Date();
-        const isToday = date.toDateString() === now.toDateString();
-        const isTomorrow = new Date(now.getTime() + 86400000).toDateString() === date.toDateString();
-        const isYesterday = new Date(now.getTime() - 86400000).toDateString() === date.toDateString();
-        
-        let datePart;
-        if (isToday) {
-            datePart = 'Today';
-        } else if (isTomorrow) {
-            datePart = 'Tomorrow';
-        } else if (isYesterday) {
-            datePart = 'Yesterday';
-        } else {
-            datePart = date.toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric',
-                year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-            });
-        }
-        
-        const timePart = date.toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit',
-            hour12: true 
-        });
-        
-        return `${datePart} at ${timePart}`;
-    }
-    
     function openExportModal() {
+        const exportData = {
+            version: '2.0',
+            timestamp: new Date().toISOString(),
+            source: 'github-todo-website-repository',
+            repository: `${REPO_OWNER}/${REPO_NAME}`,
+            tasks: tasks,
+            stats: {
+                total: tasks.length,
+                completed: tasks.filter(t => t.status === 'completed').length,
+                pending: tasks.filter(t => t.status !== 'completed').length
+            }
+        };
+        
+        exportDataTextarea.value = JSON.stringify(exportData, null, 2);
         modal.classList.add('active');
-        updateExportData();
+        
+        // Switch to export tab
+        modalTabs.forEach(t => t.classList.remove('active'));
+        document.querySelector('.modal-tab[data-tab="export"]').classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
+        });
+        document.getElementById('export-tab').classList.add('active');
     }
     
     function openImportModal() {
+        importDataTextarea.value = '';
         modal.classList.add('active');
+        
+        // Switch to import tab
         modalTabs.forEach(t => t.classList.remove('active'));
         document.querySelector('.modal-tab[data-tab="import"]').classList.add('active');
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
         });
         document.getElementById('import-tab').classList.add('active');
-        importDataTextarea.value = '';
     }
     
     function closeModalWindow() {
         modal.classList.remove('active');
     }
     
-    function updateExportData() {
-        exportDataTextarea.value = JSON.stringify(tasks, null, 2);
-    }
-    
-    function copyToClipboard() {
+    function copyExportData() {
         exportDataTextarea.select();
-        exportDataTextarea.setSelectionRange(0, 99999); // For mobile devices
-        navigator.clipboard.writeText(exportDataTextarea.value)
-            .then(() => {
-                alert('Tasks copied to clipboard!');
-            })
-            .catch(err => {
-                console.error('Failed to copy: ', err);
-                alert('Failed to copy to clipboard');
-            });
+        document.execCommand('copy');
+        
+        // Visual feedback
+        const originalText = copyJsonBtn.innerHTML;
+        copyJsonBtn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        copyJsonBtn.classList.add('btn-success');
+        
+        setTimeout(() => {
+            copyJsonBtn.innerHTML = originalText;
+            copyJsonBtn.classList.remove('btn-success');
+        }, 2000);
     }
     
-    function importTasksFromJson() {
+    async function importTasksFromJson() {
+        const jsonString = importDataTextarea.value.trim();
+        if (!jsonString) {
+            alert('Please paste JSON data to import');
+            return;
+        }
+        
         try {
-            const importedTasks = JSON.parse(importDataTextarea.value);
+            const importData = JSON.parse(jsonString);
+            let importedTasks = [];
             
-            // Validate the imported data
-            if (!Array.isArray(importedTasks)) {
-                throw new Error('Invalid data format: Expected an array of tasks');
+            // Handle different import formats
+            if (importData.version === '1.0' || importData.version === '2.0') {
+                // New format (from export)
+                importedTasks = importData.tasks || [];
+            } else if (Array.isArray(importData)) {
+                // Array of tasks
+                importedTasks = importData;
+            } else {
+                // Old localStorage format
+                importedTasks = importData.tasks || [];
             }
             
-            // Basic validation of task structure
-            const isValid = importedTasks.every(task => 
-                task && 
-                typeof task.title === 'string' &&
-                typeof task.completed === 'boolean'
-            );
-            
-            if (!isValid) {
-                throw new Error('Invalid task structure in imported data');
+            if (importedTasks.length === 0) {
+                alert('No tasks found in import data');
+                return;
             }
             
-            if (confirm(`This will replace all ${tasks.length} current tasks with ${importedTasks.length} imported tasks. Continue?`)) {
-                tasks = importedTasks;
-                saveTasks();
-                renderTasks();
-                updateStats();
-                closeModalWindow();
-                alert('Tasks imported successfully!');
+            if (!confirm(`Import ${importedTasks.length} tasks? This will add them to your repository.`)) {
+                return;
             }
+            
+            let imported = 0;
+            for (const importTask of importedTasks) {
+                // Convert to new format if needed
+                let task;
+                if (importTask.id && importTask.id.startsWith('task-')) {
+                    // Already in new format
+                    task = importTask;
+                } else {
+                    // Convert from old format
+                    task = convertOldTaskFormat(importTask);
+                }
+                
+                // Ensure unique ID
+                if (tasks.some(t => t.id === task.id)) {
+                    task.id = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                }
+                
+                // Save to repository
+                const success = await saveTaskToRepository(task, "import");
+                if (success) {
+                    tasks.push(task);
+                    imported++;
+                }
+            }
+            
+            closeModalWindow();
+            renderTasks();
+            updateStats();
+            
+            alert(`Imported ${imported} tasks successfully`);
+            
         } catch (error) {
             alert(`Error importing tasks: ${error.message}`);
+            console.error('Import error:', error);
         }
     }
     
-    function syncWithLitebot() {
-        // Create a formatted export for lite_bot
-        const exportData = {
-            version: '1.0',
-            timestamp: new Date().toISOString(),
-            source: 'github-todo-website',
-            tasks: tasks,
-            stats: {
-                total: tasks.length,
-                completed: tasks.filter(t => t.completed).length,
-                pending: tasks.filter(t => !t.completed).length
-            }
-        };
+    async function syncWithLitebot() {
+        const token = localStorage.getItem('github_repo_token');
+        if (!token) {
+            alert('Please set your GitHub token first');
+            githubTokenInput.focus();
+            return;
+        }
         
-        const jsonString = JSON.stringify(exportData, null, 2);
-        
-        // Try to save to GitHub Gist for automatic reading
-        saveToGitHubGist(jsonString).then(success => {
-            if (success) {
-                alert(`✅ ${tasks.length} tasks synced with lite_bot!\n\nI can now automatically read your tasks from GitHub Gist.\n\nNext: I'll check your tasks every 5-10 minutes.`);
-            } else {
-                // Fallback to clipboard
-                navigator.clipboard.writeText(jsonString)
-                    .then(() => {
-                        alert(`✅ ${tasks.length} tasks copied to clipboard!\n\nPaste this JSON to lite_bot for now.\n\nAutomatic gist sync requires GitHub authorization.`);
-                    })
-                    .catch(err => {
-                        console.error('Failed to copy: ', err);
-                        // Show in modal
-                        exportDataTextarea.value = jsonString;
-                        modal.classList.add('active');
-                        modalTabs.forEach(t => t.classList.remove('active'));
-                        document.querySelector('.modal-tab[data-tab="export"]').classList.add('active');
-                        document.querySelectorAll('.tab-content').forEach(content => {
-                            content.classList.remove('active');
-                        });
-                        document.getElementById('export-tab').classList.add('active');
-                        alert('Tasks prepared! Copy from export tab.');
-                    });
-            }
+        // Test repository access
+        const testResponse = await fetch(REPO_URL, {
+            headers: { 'Authorization': `token ${token}` }
         });
-    }
-    
-    async function saveToGitHubGist(jsonData) {
-        try {
-            // Check if we have a GitHub token
-            const token = localStorage.getItem('github_gist_token');
-            if (!token) {
-                console.log('No GitHub token found, using manual sync');
-                return false;
-            }
-            
-            const gistId = 'e45f66951c8b381eb33fa9b72194fab2'; // Your gist ID
-            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    description: `GitHub To-Do Tasks - Updated ${new Date().toLocaleString()}`,
-                    files: {
-                        'todo-tasks.json': {
-                            content: jsonData
-                        }
-                    }
-                })
-            });
-            
-            if (response.ok) {
-                console.log('Tasks saved to GitHub Gist successfully');
-                return true;
-            } else {
-                console.error('Failed to save to gist:', await response.text());
-                return false;
-            }
-        } catch (error) {
-            console.error('Error saving to gist:', error);
-            return false;
+        
+        if (!testResponse.ok) {
+            alert('❌ Invalid token or repository access. Please check your token has repo scope.');
+            return;
         }
+        
+        // Update sync button to show auto-sync is enabled
+        syncLitebotBtn.innerHTML = '<i class="fas fa-check-circle"></i> Auto-sync enabled';
+        syncLitebotBtn.classList.add('btn-success');
+        
+        alert(`✅ Repository sync configured!\n\nYour tasks are now automatically saved to:\nhttps://github.com/${REPO_OWNER}/${REPO_NAME}\n\nlite_bot will check for updates every 15-30 minutes.`);
     }
     
-    function saveGitHubToken() {
+    async function saveGitHubToken() {
         const token = githubTokenInput.value.trim();
         if (!token) {
             alert('Please enter a GitHub token');
@@ -526,110 +834,58 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Test the token by trying to access a gist (read-only)
-        fetch('https://api.github.com/gists/e45f66951c8b381eb33fa9b72194fab2', {
-            headers: {
-                'Authorization': `token ${token}`
-            }
-        })
-        .then(response => {
+        // Test the token by trying to access the repository
+        try {
+            const response = await fetch(REPO_URL, {
+                headers: { 'Authorization': `token ${token}` }
+            });
+            
             if (response.ok) {
                 // Token works, save it
-                localStorage.setItem('github_gist_token', token);
-                alert('✅ GitHub token saved successfully!\n\nYour tasks will now sync automatically with lite_bot.');
+                localStorage.setItem('github_repo_token', token);
+                alert('✅ GitHub token saved successfully!\n\nYour tasks will now sync automatically with the repository.');
                 
-                // Trigger an immediate sync
-                if (tasks.length > 0) {
-                    const exportData = {
-                        version: '1.0',
-                        timestamp: new Date().toISOString(),
-                        source: 'github-todo-website',
-                        tasks: tasks,
-                        stats: {
-                            total: tasks.length,
-                            completed: tasks.filter(t => t.completed).length,
-                            pending: tasks.filter(t => !t.completed).length
-                        }
-                    };
-                    saveToGitHubGist(JSON.stringify(exportData, null, 2));
+                // Update sync button
+                if (syncLitebotBtn) {
+                    syncLitebotBtn.innerHTML = '<i class="fas fa-check-circle"></i> Auto-sync enabled';
+                    syncLitebotBtn.classList.add('btn-success');
                 }
+                
+                // Migrate existing tasks if any
+                const localTasks = JSON.parse(localStorage.getItem('github-todo-tasks')) || [];
+                if (localTasks.length > 0) {
+                    if (confirm(`Migrate ${localTasks.length} existing tasks to repository?`)) {
+                        await migrateLocalTasksToRepository();
+                        // Reload tasks from repository
+                        await loadTasks();
+                    }
+                }
+                
             } else {
-                alert('❌ Invalid token. Please check that your token has gist scope and try again.');
+                alert('❌ Invalid token. Please check that:\n1. Token has "repo" scope\n2. Repository "erdellmfx2/todo-manager" exists\n3. You have access to the repository');
             }
-        })
-        .catch(error => {
+        } catch (error) {
+            alert(`❌ Error testing token: ${error.message}`);
             console.error('Token test error:', error);
-            alert('❌ Error testing token. Please check your connection and try again.');
-        });
-    }
-    
-    // Auto-save to gist when tasks change (if token exists)
-    function saveTasks() {
-        localStorage.setItem('github-todo-tasks', JSON.stringify(tasks));
-        
-        // Auto-save to gist if we have a token
-        const token = localStorage.getItem('github_gist_token');
-        if (token && tasks.length > 0) {
-            const exportData = {
-                version: '1.0',
-                timestamp: new Date().toISOString(),
-                source: 'github-todo-website',
-                tasks: tasks,
-                stats: {
-                    total: tasks.length,
-                    completed: tasks.filter(t => t.completed).length,
-                    pending: tasks.filter(t => !t.completed).length
-                }
-            };
-            
-            // Immediate sync (no debounce)
-            saveToGitHubGist(JSON.stringify(exportData, null, 2))
-                .then(success => {
-                    if (success) console.log('Auto-synced to gist');
-                });
         }
     }
     
-    // Add some sample tasks if empty
-    if (tasks.length === 0) {
-        const sampleTasks = [
-            {
-                id: 1,
-                title: 'Review pull request #42',
-                priority: 'high',
-                completed: false,
-                createdAt: new Date().toISOString(),
-                completedAt: null
-            },
-            {
-                id: 2,
-                title: 'Fix login page bug',
-                priority: 'critical',
-                completed: true,
-                createdAt: new Date(Date.now() - 86400000).toISOString(), // Yesterday
-                completedAt: new Date().toISOString()
-            },
-            {
-                id: 3,
-                title: 'Update documentation',
-                priority: 'medium',
-                completed: false,
-                createdAt: new Date(Date.now() - 172800000).toISOString(), // 2 days ago
-                completedAt: null
-            },
-            {
-                id: 4,
-                title: 'Plan next sprint',
-                priority: 'low',
-                completed: false,
-                createdAt: new Date(Date.now() - 259200000).toISOString(), // 3 days ago
-                completedAt: null
-            }
-        ];
-        
-        tasks = sampleTasks;
-        saveTasks();
-        renderTasks();
-        updateStats();
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
+    
+    // Auto-save tasks on page unload (backup)
+    window.addEventListener('beforeunload', function() {
+        // Keep localStorage as backup
+        localStorage.setItem('github-todo-tasks-backup', JSON.stringify(tasks.map(t => ({
+            id: t.id,
+            title: t.title,
+            completed: t.status === 'completed',
+            priority: t.priority,
+            createdAt: t.created_at,
+            dueDate: t.due_date
+        }))));
+    });
 });
